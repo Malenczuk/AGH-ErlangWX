@@ -45,28 +45,12 @@ make_window(Server) ->
 
   wxFrame:connect (Frame, command_menu_selected),
 
-
-
-
-
   MainSizer = wxFlexGridSizer:new(1, 2, 10, 10),
   ListSizer = wxFlexGridSizer:new(1, 1, 10, 10),
   TextSizer = wxFlexGridSizer:new(1, 1, 10, 5),
 
-
-
   Notebook = wxNotebook:new(Panel, 999),
-  Page1 = wxScrolledWindow:new(Notebook),
-  wxNotebook:addPage(Notebook, Page1, "untitled.txt", []),
-  PageSizer = wxFlexGridSizer:new(1, 1, 10, 5),
-  Text = wxTextCtrl:new(Page1, 111, [{style, ?wxTE_MULTILINE}, {style, ?wxTE_NO_VSCROLL}]),
-  wxSizer:add(PageSizer, Text, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}, {border, 10}]),
-  wxFlexGridSizer:addGrowableCol(PageSizer, 0, [{proportion, 1}]),
-  wxFlexGridSizer:addGrowableRow(PageSizer, 0, [{proportion, 1}]),
-  wxPanel:setSizer(Page1, PageSizer, []),
-
-
-
+  insertPage(Notebook, "untitled.txt", ""),
 
 %%  Text1 = wxTextCtrl:new(Panel, 1001, [{style, ?wxTE_MULTILINE}, {style, ?wxTE_NO_VSCROLL}]),
 
@@ -74,6 +58,10 @@ make_window(Server) ->
   wxSizer:add(ListSizer, CheckListBox, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}, {border, 10}]),
   wxFlexGridSizer:addGrowableRow(ListSizer, 0, [{proportion, 1}]),
   wxFlexGridSizer:addGrowableCol(ListSizer, 0, [{proportion, 1}]),
+
+  fillChecklist(CheckListBox),
+  wxFrame:connect (Frame, command_listbox_doubleclicked),
+
 
 %%  wxSizer:add(TextSizer, Text1, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}, {border, 10}]),
 
@@ -92,11 +80,10 @@ make_window(Server) ->
   wxFrame:connect(Frame, close_window),
   wxPanel:connect(Panel, command_button_clicked),
 
-  {Frame, Notebook, "untitled.txt"}.
+  {Frame, Notebook, "untitled.txt", #{}}.
 
 loop(State) ->
-  {Frame, Notebook, SelectedPath} = State,
-  Text1 = "xd",
+  {Frame, Notebook, SelectedPath, Contents} = State,
   receive
     #wx{event = #wxClose{}} ->
       io:format("~p Closing window ~n", [self()]),
@@ -112,29 +99,32 @@ loop(State) ->
       wxFileDialog:showModal(FilePicker),
       Path = wxFileDialog:getPath(FilePicker),
       {ok, Data} = file:read_file(Path),
+      [FileName | _] = string:split(string:reverse(Path), "/"),
+      TextCtrl = insertPage(Notebook, string:reverse(FileName), Data),
+      wxNotebook:changeSelection(Notebook, wxNotebook:getPageCount(Notebook)-1),
+      NewMap = maps:put(wxNotebook:getSelection(Notebook), TextCtrl, Contents),
+      loop({Frame, Notebook, Path, NewMap});
 
-      CurPage = wxNotebook:getCurrentPage(Notebook),
-      io:format("~p  ~n", [CurPage]),
-      PageSizer = wxWindow:getSizer(CurPage),
-      io:format("~p  ~n", [PageSizer]),
-      Text = wxSizer:getChildren(PageSizer),
-      io:format("~p  ~n", [Text]),
-
-      wxTextCtrl:setValue(Text, [Data]),
-      loop({Frame, Text, Path});
 
     #wx{id = 402, event = #wxCommand{type = command_menu_selected}} ->
-      EditedTExt = wxTextCtrl:getValue(Text1),
-      file:write_file(SelectedPath, EditedTExt),
+      EditedText = maps:get(wxNotebook:getSelection(Notebook), Contents),
+      file:write_file(SelectedPath, EditedText),
       loop(State);
 
     #wx{id = 403, event = #wxCommand{type = command_menu_selected}} ->
-      EditedTExt = wxTextCtrl:getValue(Text1),
+      EditedText = wxTextCtrl:getValue(maps:get(wxNotebook:getSelection(Notebook), Contents)),
+
       FilePicker = wxFileDialog:new(Frame, [{style, ?wxFD_SAVE}]),
       wxFileDialog:setMessage(FilePicker, "Save"),
       wxFileDialog:showModal(FilePicker),
       Path = wxFileDialog:getPath(FilePicker),
-      file:write_file(Path, EditedTExt),
+
+      file:write_file(Path, EditedText),
+      loop(State);
+
+    #wx{id = 1234, event = #wxCommand{type =  command_listbox_doubleclicked}} ->
+      io:format("xdxdxdx ~n", []),
+
       loop(State);
 
       Msg ->
@@ -142,3 +132,25 @@ loop(State) ->
       loop(State)
 
   end.
+
+
+insertPage(Notebook, Title, Content) ->
+  Page1 = wxScrolledWindow:new(Notebook),
+  wxNotebook:addPage(Notebook, Page1, Title, []),
+  PageSizer = wxFlexGridSizer:new(1, 1, 10, 5),
+  Text = wxTextCtrl:new(Page1, 111, [{style, ?wxTE_MULTILINE}, {style, ?wxTE_NO_VSCROLL}]),
+  wxSizer:add(PageSizer, Text, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}, {border, 10}]),
+  wxSizer:fit(PageSizer, Text),
+  wxFlexGridSizer:addGrowableCol(PageSizer, 0, [{proportion, 1}]),
+  wxFlexGridSizer:addGrowableRow(PageSizer, 0, [{proportion, 1}]),
+  wxPanel:setSizer(Page1, PageSizer, []),
+  wxTextCtrl:setValue(Text, Content),
+  wxWindow:fit(Page1),
+  Text.
+
+
+fillChecklist(CheckList) ->
+  {ok, Dir} = file:get_cwd(),
+  {ok, FileNames} = file:list_dir(Dir),
+  lists:foldl(fun(FileName, Acc) -> wxCheckListBox:append(CheckList, FileName), 0 end, 0, FileNames),
+  ok.
