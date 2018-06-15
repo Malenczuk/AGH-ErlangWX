@@ -8,15 +8,12 @@
 %%%-------------------------------------------------------------------
 -module(gui).
 -author("mdronski").
--include("messenger.hrl").
 -include_lib("wx/include/wx.hrl").
 -export([start/0]).
 
 
 start() ->
-
   Server = wx:new(),
-
   State = make_window(Server),
   loop(State).
 
@@ -26,107 +23,109 @@ make_window(Server) ->
   Panel = wxScrolledWindow:new(Frame),
   wxScrolledWindow:enableScrolling(Panel, false, true),
 
-
+%%  Initialise menu bar
   MenuBar = wxMenuBar:new(),
   wxFrame:setMenuBar (Frame, MenuBar),
   FileMn = wxMenu:new(),
   wxMenuBar:append (MenuBar, FileMn, "&File"),
   Quit = wxMenuItem:new ([{id,400},{text, "&Quit"}]),
   wxMenu:append (FileMn, Quit),
-
   OpenFile = wxMenuItem:new ([{id,401},{text, "&Open"}]),
   wxMenu:append (FileMn, OpenFile),
-
   SaveFile = wxMenuItem:new ([{id,402},{text, "&Save"}]),
   wxMenu:append (FileMn, SaveFile),
-
   SaveFileAs = wxMenuItem:new ([{id,403},{text, "&Save as"}]),
   wxMenu:append (FileMn, SaveFileAs),
-
   wxFrame:connect (Frame, command_menu_selected),
 
-  MainSizer = wxFlexGridSizer:new(1, 2, 10, 10),
-  ListSizer = wxFlexGridSizer:new(1, 1, 10, 10),
-  TextSizer = wxFlexGridSizer:new(1, 1, 10, 5),
 
+%%  Initialise notebook
   Notebook = wxNotebook:new(Panel, 999),
-  insertPage(Notebook, "untitled.txt", ""),
+  Page0 = insertPage(Notebook, "untitled.txt", ""),
 
-%%  Text1 = wxTextCtrl:new(Panel, 1001, [{style, ?wxTE_MULTILINE}, {style, ?wxTE_NO_VSCROLL}]),
-
+%%  Initialise file list
+  ListSizer = wxFlexGridSizer:new(1, 1, 10, 10),
   CheckListBox = wxCheckListBox:new(Panel, 1234, [{size, {150, 100}}]),
   wxSizer:add(ListSizer, CheckListBox, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}, {border, 10}]),
   wxFlexGridSizer:addGrowableRow(ListSizer, 0, [{proportion, 1}]),
   wxFlexGridSizer:addGrowableCol(ListSizer, 0, [{proportion, 1}]),
 
   fillChecklist(CheckListBox),
-  wxFrame:connect (Frame, command_listbox_doubleclicked),
+  wxFrame:connect(Frame, command_listbox_doubleclicked),
 
+%%  Initialise notebook sizer
+  NotebookSizer = wxFlexGridSizer:new(1, 1, 10, 5),
+  wxFlexGridSizer:addGrowableRow(NotebookSizer, 0, [{proportion, 1}]),
+  wxFlexGridSizer:addGrowableCol(NotebookSizer, 0, [{proportion, 1}]),
 
-%%  wxSizer:add(TextSizer, Text1, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}, {border, 10}]),
-
-  wxFlexGridSizer:addGrowableRow(TextSizer, 0, [{proportion, 1}]),
-  wxFlexGridSizer:addGrowableCol(TextSizer, 0, [{proportion, 1}]),
-
+%%  Initialise main sizer
+  MainSizer = wxFlexGridSizer:new(1, 2, 10, 10),
   wxSizer:add(MainSizer, ListSizer, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}]),
   wxSizer:add(MainSizer, Notebook, [{proportion, 1}, {flag, ?wxALL bor ?wxEXPAND}]),
   wxFlexGridSizer:addGrowableRow(MainSizer, 0, [{proportion, 1}]),
   wxFlexGridSizer:addGrowableCol(MainSizer, 1, [{proportion, 1}]),
-
-
   wxPanel:setSizer(Panel, MainSizer, []),
-  wxFrame:show(Frame),
 
+%%  connect and show window
+  wxFrame:show(Frame),
   wxFrame:connect(Frame, close_window),
   wxPanel:connect(Panel, command_button_clicked),
 
-  {Frame, Notebook, "untitled.txt", #{}}.
+  {Frame, Notebook, CheckListBox, #{0 => Page0}}.
 
 loop(State) ->
-  {Frame, Notebook, SelectedPath, Contents} = State,
+  {Frame, Notebook, CheckListBox, TextCtrlMap} = State,
+
   receive
+%%    Closing window
     #wx{event = #wxClose{}} ->
       io:format("~p Closing window ~n", [self()]),
       wxWindow:destroy(Frame),
       ok;
 
+%%    Menu close window
     #wx{id = 400, event = #wxCommand{type = command_menu_selected}} ->
       io:format("~p Closing window ~n", [self()]),
       wxWindow:destroy(Frame);
 
-    #wx{id = 401, event = #wxCommand{type = command_menu_selected}} ->
-      FilePicker = wxFileDialog:new(Frame),
-      wxFileDialog:showModal(FilePicker),
-      Path = wxFileDialog:getPath(FilePicker),
-      {ok, Data} = file:read_file(Path),
-      [FileName | _] = string:split(string:reverse(Path), "/"),
-      TextCtrl = insertPage(Notebook, string:reverse(FileName), Data),
-      wxNotebook:changeSelection(Notebook, wxNotebook:getPageCount(Notebook)-1),
-      NewMap = maps:put(wxNotebook:getSelection(Notebook), TextCtrl, Contents),
-      loop({Frame, Notebook, Path, NewMap});
-
-
+%%  Save file from menu
     #wx{id = 402, event = #wxCommand{type = command_menu_selected}} ->
-      EditedText = maps:get(wxNotebook:getSelection(Notebook), Contents),
-      file:write_file(SelectedPath, EditedText),
-      loop(State);
+      Text = getCurrentText(Notebook, TextCtrlMap),
+      Path = getSelectedFileName(Notebook),
+      file:write_file(Path, Text),
+      NewCheckList = updateChecklist(CheckListBox, Path),
+      loop({Frame, Notebook, NewCheckList, TextCtrlMap});
 
+%%    Save as from menu
     #wx{id = 403, event = #wxCommand{type = command_menu_selected}} ->
-      EditedText = wxTextCtrl:getValue(maps:get(wxNotebook:getSelection(Notebook), Contents)),
+      Text = getCurrentText(Notebook, TextCtrlMap),
+      Path = getPathFromPicker(Frame, save),
+      file:write_file(Path, Text),
+      io:format("~p ~n", [Path]),
+      NewCheckList = updateChecklist(CheckListBox, Path),
 
-      FilePicker = wxFileDialog:new(Frame, [{style, ?wxFD_SAVE}]),
-      wxFileDialog:setMessage(FilePicker, "Save"),
-      wxFileDialog:showModal(FilePicker),
-      Path = wxFileDialog:getPath(FilePicker),
+      loop({Frame, Notebook, NewCheckList, TextCtrlMap});
 
-      file:write_file(Path, EditedText),
-      loop(State);
+%%    Open file from menu
+    #wx{id = 401, event = #wxCommand{type = command_menu_selected}} ->
+      Path = getPathFromPicker(Frame, open),
+      {ok, Data} = file:read_file(Path),
+      TextCtrl = insertPage(Notebook, Path, Data),
+      wxNotebook:changeSelection(Notebook, wxNotebook:getPageCount(Notebook)-1),
+      NewMap = maps:put(wxNotebook:getSelection(Notebook), TextCtrl, TextCtrlMap),
+      NewCheckList = updateChecklist(CheckListBox, Path),
+      loop({Frame, Notebook, NewCheckList, NewMap});
 
+%%    Open file from check list
     #wx{id = 1234, event = #wxCommand{type =  command_listbox_doubleclicked}} ->
-      io:format("xdxdxdx ~n", []),
+      Path = wxListBox:getString(CheckListBox, wxListBox:getSelection(CheckListBox)),
+      {ok, Data} = file:read_file(Path),
+      TextCtrl = insertPage(Notebook, Path, Data),
+      wxNotebook:changeSelection(Notebook, wxNotebook:getPageCount(Notebook)-1),
+      NewMap = maps:put(wxNotebook:getSelection(Notebook), TextCtrl, TextCtrlMap),
+      loop({Frame, Notebook, CheckListBox, NewMap});
 
-      loop(State);
-
+%%    Default
       Msg ->
       io:format("loop default triggered: Got ~n ~p ~n", [Msg]),
       loop(State)
@@ -148,9 +147,31 @@ insertPage(Notebook, Title, Content) ->
   wxWindow:fit(Page1),
   Text.
 
-
 fillChecklist(CheckList) ->
   {ok, Dir} = file:get_cwd(),
   {ok, FileNames} = file:list_dir(Dir),
-  lists:foldl(fun(FileName, Acc) -> wxCheckListBox:append(CheckList, FileName), 0 end, 0, FileNames),
+  lists:foldl(fun(FileName, _) -> wxCheckListBox:append(CheckList, FileName), 0 end, 0, FileNames),
   ok.
+
+getSelectedFileName(Notebook) ->
+  wxNotebook:getPageText(Notebook, wxNotebook:getSelection(Notebook)).
+
+getCurrentText(Notebook, TextCtrlMap) ->
+  wxTextCtrl:getValue(maps:get(wxNotebook:getSelection(Notebook), TextCtrlMap)).
+
+updateChecklist(CheckList, FileName) ->
+  case wxCheckListBox:findString(CheckList, FileName) of
+    ?wxNOT_FOUND -> wxCheckListBox:append(CheckList, FileName),
+      CheckList;
+    _ -> CheckList
+  end.
+
+getPathFromPicker(Frame, Type) ->
+  FilePicker = case Type of
+                 open -> wxFileDialog:new(Frame);
+                 save -> wxFileDialog:new(Frame, [{style, ?wxFD_SAVE}])
+               end,
+  wxFileDialog:showModal(FilePicker),
+  Path = wxFileDialog:getPath(FilePicker),
+  [FileName | _] = string:split(string:reverse(Path), "/"),
+  string:reverse(FileName).
